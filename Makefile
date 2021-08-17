@@ -1,11 +1,8 @@
-flags = -Wall -lpthread
-objects = main.o threadpool.o
+flags = -Wall -I./ -lpthread
+objects = threadpool.o
 
 edit: $(objects)
-	gcc -o main $(flags) $(objects)
-
-main.o: main.c
-	gcc -c main.c $(flags)
+	gcc -o main $(flags) main.c $(objects)
 
 threadpool.o: threadpool.c
 	gcc -c threadpool.c $(flags)

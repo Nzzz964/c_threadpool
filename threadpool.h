@@ -4,9 +4,21 @@
 #include <pthread.h>
 #include <stddef.h>
 
+#ifndef DEBUG
+#define LOG(x)
+#else
+#define LOG(x) printf("-------- " x " --------\n")
+#endif
+
+typedef enum threadpool_status_t
+{
+    threadpool_status_running = 0,
+    threadpool_status_shutdown = -1
+} threadpool_status_t;
+
 typedef struct task_t
 {
-    void (*func)(void *);
+    void *(*func)(void *);
     void *argument;
 } task_t;
 
@@ -24,12 +36,6 @@ typedef struct queue_t
     task_t *task;
 } queue_t;
 
-typedef enum
-{
-    threadpool_status_running = 0,
-    threadpool_status_shutdown = -1
-} threadpool_status_t;
-
 typedef struct threadpool_t
 {
     /** persist thread num */
@@ -44,16 +50,15 @@ typedef struct threadpool_t
 } threadpool_t;
 
 /** return NULL if err */
-static queue_t *queue_create(int size);
-static void queue_destory(queue_t *q);
-
+queue_t *queue_create(int size);
+void queue_destory(queue_t *q);
 /** return negative int val if err */
-static int enqueue(queue_t *q, void (*func)(void *), void *argument);
+int enqueue(queue_t *q, void *(*func)(void *), void *argument);
 /** return NULL if err */
-static task_t *dequeue(queue_t *q);
+task_t *dequeue(queue_t *q);
 
 threadpool_t *threadpool_create(int thread_count, queue_t *q);
+void threadpool_add(threadpool_t *pool, void *(*func)(void *), void *argument);
 void threadpool_destory(threadpool_t *pool);
-static void handler(void *pool);
 
 #endif

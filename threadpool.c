@@ -1,10 +1,13 @@
 #include <stddef.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "threadpool.h"
 
-static queue_t *queue_create(int size)
+static void *handler(void *threadpool);
+
+queue_t *queue_create(int size)
 {
     queue_t *queue = (queue_t *)malloc(sizeof(queue_t) * size);
     if (queue == NULL)
@@ -25,7 +28,7 @@ static queue_t *queue_create(int size)
     {
         goto err;
     }
-    return &queue;
+    return queue;
 
 err:
     if (queue->task != NULL)
@@ -39,14 +42,14 @@ err:
     return NULL;
 }
 
-static void queue_destory(queue_t *q)
+void queue_destory(queue_t *q)
 {
     pthread_mutex_destroy(&(q->mutex));
     free(q->task);
     free(q);
 }
 
-static int enqueue(queue_t *q, void (*func)(void *), void *argument)
+int enqueue(queue_t *q, void *(*func)(void *), void *argument)
 {
     pthread_mutex_lock(&(q->mutex));
 
@@ -63,9 +66,10 @@ static int enqueue(queue_t *q, void (*func)(void *), void *argument)
     return 0;
 }
 
-static task_t *dequeue(queue_t *q)
+task_t *dequeue(queue_t *q)
 {
     pthread_mutex_lock(&(q->mutex));
+
     if (q->count == 0)
     {
         return NULL;
@@ -73,6 +77,7 @@ static task_t *dequeue(queue_t *q)
     task_t *task = &(q->task[q->head]);
     q->head = (q->head + 1) % q->size;
     q->count -= 1;
+
     pthread_mutex_unlock(&(q->mutex));
     return task;
 }
@@ -101,13 +106,14 @@ threadpool_t *threadpool_create(int thread_count, queue_t *q)
     pool->thread_count = 0;
     for (int i = 0; i < thread_count; i++)
     {
-        if (pthread_create(pool->threads[i], NULL, handler, (void *)pool) != 0)
+        if (pthread_create(&(pool->threads[i]), NULL, handler, (void *)pool) != 0)
         {
             goto err;
         }
         pool->thread_count++;
     }
     pool->status = threadpool_status_running;
+    return pool;
 err:
     if (pool->thread_count != 0)
     {
@@ -129,9 +135,53 @@ err:
 
 void threadpool_destory(threadpool_t *pool)
 {
+    LOG("threadpool destoring");
+    pthread_mutex_lock(&(pool->mutex));
+    pool->status = threadpool_status_shutdown;
+    pthread_cond_broadcast(&(pool->notify));
+    pthread_mutex_unlock(&(pool->mutex));
+    for (int i = 0; i < pool->thread_count; i++)
+    {
+        pthread_join(pool->threads[i], NULL);
+    }
+    pthread_mutex_destroy(&(pool->mutex));
+    pthread_cond_destroy(&(pool->notify));
+    free(pool->threads);
+    free(pool);
 }
 
-static void handler(void *pool)
+void threadpool_add(threadpool_t *pool, void *(*func)(void *), void *argument)
 {
-    (threadpool_t *)pool;
+    enqueue(pool->queue, func, argument);
+    pthread_cond_signal(&(pool->notify));
+}
+
+static void *handler(void *threadpool)
+{
+    threadpool_t *pool = (threadpool_t *)threadpool;
+    for (;;)
+    {
+        pthread_mutex_lock(&(pool->mutex));
+
+        while (pool->queue->count == 0 && pool->status != threadpool_status_shutdown)
+        {
+            LOG("pthread_cond_wait");
+            pthread_cond_wait(&(pool->notify), &(pool->mutex));
+        }
+
+        //结束进程池 要先完成队列里的所有任务
+        if (pool->queue->count == 0 && pool->status == threadpool_status_shutdown)
+        {
+            break;
+        }
+
+        task_t *task = dequeue(pool->queue);
+        pthread_mutex_unlock(&(pool->mutex));
+
+        (task->func)(task->argument);
+    }
+
+    pthread_mutex_unlock(&(pool->mutex));
+    LOG("pthread_exit");
+    pthread_exit(NULL);
 }
